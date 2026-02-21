@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Pinboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <div class="header-row">
+      <div id="header-dither-bg" class="header-dither-bg"></div>
+      <div class="header-text">
+        <h1 id="pin-app-btn" class="clickable-header" title="Toggle Always on Top">
+          <span>Image<img src="assets/icons/pin_icon.webp" class="header-pin narrow-pin" draggable="false"
+              alt="Pin"></span><br><span>Pinboard<img src="assets/icons/pin_icon.webp" class="header-pin wide-pin"
+              draggable="false" alt="Pin"></span>
+        </h1>
+      </div>
+      <div class="header-buttons">
+        <div class="view-switch" role="tablist" aria-label="View mode">
+          <button id="grid-mode-btn" class="import-btn view-btn active" title="Grid view">Grid</button>
+          <button id="canvas-mode-btn" class="import-btn view-btn" title="Canvas view">Canvas</button>
+        </div>
+
+        <button id="open-file-btn" class="import-btn" title="Open image file">
+          <svg class="import-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2">
+            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+            <polyline points="13 2 13 9 20 9" />
+          </svg>
+        </button>
+        <button id="import-btn" class="import-btn" title="Paste from clipboard">
+          <svg class="import-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+            <path d="M12 11v6" />
+            <path d="M9 14l3-3 3 3" />
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div id="status-bar" class="status-bar hidden">
+      <div class="status-info">
+        <span class="status-text">Processing images...</span>
+        <span id="status-count" class="status-count"></span>
+      </div>
+      <div class="status-progress-track">
+        <div id="status-progress-fill" class="status-progress-fill"></div>
+      </div>
+    </div>
+  </header>
+
+  <main id="workspace" class="workspace drop-zone">
+    <section id="grid-view" class="grid-view">
+      <div id="placeholder" class="placeholder">
+        <p>Copied images will appear here</p>
+        <p>Drag and drop images from your computer</p>
+        <p>Drag images out as real files</p>
+      </div>
+      <div id="loading-indicator" class="loading-indicator">Loading...</div>
+    </section>
+
+    <section id="canvas-view" class="canvas-view hidden">
+      <div id="canvas-grid-coarse" class="canvas-grid-layer canvas-grid-coarse"></div>
+      <div id="canvas-grid-fine" class="canvas-grid-layer canvas-grid-fine"></div>
+      <div id="canvas-surface" class="canvas-surface"></div>
+      <canvas id="canvas-drawing-layer" class="canvas-drawing-layer"></canvas>
+      <div id="draw-cursor" class="draw-cursor hidden"></div>
+      <button id="add-note-btn" class="import-btn canvas-add-note-btn" title="Add sticky note">+ NOTE</button>
+
+      <div class="canvas-drawing-tools">
+        <button id="tool-pan-btn" class="import-btn canvas-tool-btn active" title="Pan (Default)">Pan</button>
+        <button id="tool-brush-btn" class="import-btn canvas-tool-btn" title="Brush">Brush</button>
+        <button id="tool-eraser-btn" class="import-btn canvas-tool-btn" title="Eraser">Eraser</button>
+        <div class="draw-color-wrapper" title="Brush Color">
+          <input type="color" id="draw-color-picker" class="draw-color-picker" value="#ff0000">
+        </div>
+        <div class="draw-size-wrapper" title="Brush Size">
+          <input type="range" id="draw-size-picker" min="2" max="100" class="draw-size-picker" value="2">
+        </div>
+        <button id="draw-clear-btn" class="import-btn canvas-tool-btn" title="Clear Drawing">Clear</button>
+      </div>
+      <div class="canvas-hud">
+        <span id="canvas-zoom-label">100%</span>
+        <button id="canvas-reset-btn" class="import-btn canvas-reset-btn" title="Reset canvas view">Reset</button>
+      </div>
+      <a href="https://github.com/mantukin/image-pinboard" target="_blank" id="github-repo-link"
+        class="github-repo-link" title="Source code on GitHub">
+        <img src="assets/icons/github_icon.webp" alt="GitHub" draggable="false">
+      </a>
+    </section>
+  </main>
+
+  <div id="confirm-dialog" class="modal-overlay">
+    <div class="modal-content">
+      <p>Delete this image?</p>
+      <div class="modal-actions">
+        <button id="confirm-delete-btn" class="btn btn-danger">Delete</button>
+        <button id="cancel-delete-btn" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="image-view-modal" class="modal-overlay">
+    <style>
+      #pipette-btn {
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        padding: 6px;
+        position: relative;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.1s;
+      }
+
+      #pipette-btn.active {
+        background: transparent;
+      }
+
+      #pipette-btn img {
+        width: 32px;
+        height: 32px;
+        filter: invert(1);
+        image-rendering: auto;
+        display: block;
+        border-radius: 2px;
+      }
+
+      #pipette-btn.active img {
+        filter: invert(0);
+        background: var(--accent-color);
+        box-shadow: 2px 2px 0 #000;
+      }
+
+      #pipette-btn:hover {
+        transform: scale(1.1);
+      }
+
+      #pipette-btn:active {
+        transform: scale(0.9);
+      }
+
+      #pipette-hud {
+        width: min(340px, calc(100vw - 32px));
+        justify-content: space-between;
+        box-sizing: border-box;
+      }
+
+      #pipette-copy-btn {
+        width: 110px;
+        min-width: 110px;
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      #pipette-hex-code {
+        min-width: 110px;
+      }
+    </style>
+    <div class="image-view-actions"
+      style="position: absolute; top: 16px; right: 16px; display: flex; align-items: center; gap: 12px; z-index: 101;">
+      <div class="opacity-slider-wrapper" title="Window Opacity">
+        <span class="opacity-slider-label">Opacity</span>
+        <input type="range" id="window-opacity-slider" class="retro-slider" min="0.1" max="1.0" step="0.05" value="1.0">
+        <label class="retro-checkbox-label" title="Hide UI and background">
+          <input type="checkbox" id="hide-ui-checkbox" class="retro-checkbox">
+          <span class="retro-checkbox-custom"></span> Hide UI
+        </label>
+        <label class="retro-checkbox-label" title="Ignore clicks on image and background">
+          <input type="checkbox" id="click-through-checkbox" class="retro-checkbox">
+          <span class="retro-checkbox-custom"></span> Click Through
+        </label>
+      </div>
+      <button id="pipette-btn" class="action-btn" title="Pick color">
+        <img src="assets/icons/color_picker_icon.webp" alt="Pipette" draggable="false">
+      </button>
+      <div id="drag-handle" class="drag-handle" data-tauri-drag-region title="Move Window">
+        &#10021;
+      </div>
+      <span id="close-image-view" class="close-btn" style="position: static;">&times;</span>
+    </div>
+    <div id="pipette-hud" class="canvas-hud hidden"
+      style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 101; display: none;">
+      <div id="pipette-color-preview"
+        style="width: 32px; height: 32px; border: 2px solid #111; box-shadow: 2px 2px 0 #000; background-color: #000;">
+      </div>
+      <span id="pipette-hex-code"
+        style="color: var(--accent-color); font-weight: bold; font-size: 24px; min-width: 110px; text-align: center; line-height: 1;">#000000</span>
+      <button id="pipette-copy-btn" class="import-btn canvas-tool-btn" title="Copy to clipboard">Copy</button>
+    </div>
+    <canvas id="pipette-magnifier" class="hidden" width="96" height="96"
+      style="position: absolute; pointer-events: none; z-index: 100; border: 2px solid #fff; box-shadow: 0 0 0 2px #000; display: none; image-rendering: pixelated;"></canvas>
+    <img id="full-width-image" src="" alt="Full view" draggable="false">
+  </div>
+
+  <div id="note-edit-modal" class="modal-overlay">
+    <div class="modal-content note-modal-content">
+      <button id="note-delete-btn" class="btn btn-danger note-delete-corner-btn" title="Delete note">Delete</button>
+      <p>Edit note</p>
+      <textarea id="note-edit-text" class="note-edit-textarea" spellcheck="false"
+        placeholder="Type your note..."></textarea>
+      <div class="note-color-section">
+        <span class="note-color-label">Color</span>
+        <div id="note-color-list" class="note-color-list"></div>
+      </div>
+      <div class="modal-actions note-modal-actions">
+        <button id="note-close-btn" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="note-delete-confirm-modal" class="modal-overlay">
+    <div class="modal-content">
+      <p>Delete this note?</p>
+      <div class="modal-actions">
+        <button id="confirm-note-delete-btn" class="btn btn-danger">Delete</button>
+        <button id="cancel-note-delete-btn" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="draw-clear-confirm-modal" class="modal-overlay">
+    <div class="modal-content">
+      <p>Clear all drawings?</p>
+      <div class="modal-actions">
+        <button id="confirm-draw-clear-btn" class="btn btn-danger">Clear</button>
+        <button id="cancel-draw-clear-btn" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+
+</html>

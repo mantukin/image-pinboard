@@ -1,0 +1,19 @@
+{
+  "name": "image-clipboard-manager",
+  "version": "1.0.0",
+  "description": "Desktop app for managing clipboard images with real file drag-and-drop",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons:build": "node convert_icons.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "sharp": "^0.34.5"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0"
+  }
+}
