@@ -80,7 +80,7 @@
           <input type="color" id="draw-color-picker" class="draw-color-picker" value="#ff0000">
         </div>
         <div class="draw-size-wrapper" title="Brush Size">
-          <input type="range" id="draw-size-picker" min="2" max="100" class="draw-size-picker" value="2">
+          <input type="range" id="draw-size-picker" min="2" max="100" class="retro-slider draw-size-picker" value="2">
         </div>
         <button id="draw-clear-btn" class="import-btn canvas-tool-btn" title="Clear Drawing">Clear</button>
       </div>
@@ -209,6 +209,10 @@
       <div class="note-color-section">
         <span class="note-color-label">Color</span>
         <div id="note-color-list" class="note-color-list"></div>
+      </div>
+      <div class="note-font-section" style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+        <span class="note-color-label">Text Size</span>
+        <input type="range" id="note-font-size" class="retro-slider" min="1" max="10" step="0.5" value="3">
       </div>
       <div class="modal-actions note-modal-actions">
         <button id="note-close-btn" class="btn">Close</button>

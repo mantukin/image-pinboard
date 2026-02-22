@@ -44,6 +44,7 @@ struct CanvasNoteInput {
     width: f64,
     height: f64,
     z_index: i64,
+    font_size: f64,
 }
 
 fn now_ts() -> i64 {
@@ -253,6 +254,7 @@ async fn save_canvas_notes(
             item.width.max(128.0),
             item.height.max(128.0),
             item.z_index,
+            item.font_size,
             updated_at,
         )
         .map_err(|e| e.to_string())?;

@@ -13,41 +13,39 @@ export function renderDrawings() {
     ctx.scale(canvasState.scale, canvasState.scale);
 
     for (const stroke of state.drawingStrokes) {
-        if (stroke.isEraser) {
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.fillStyle = 'rgba(0,0,0,1)';
-        } else {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.fillStyle = stroke.color;
+        let path = stroke.cachedLinePath;
+        if (!(path instanceof Path2D) || stroke.cachedLen !== stroke.points.length) {
+            path = new Path2D();
+            const pLen = stroke.points.length;
+            if (pLen > 0) {
+                path.moveTo(stroke.points[0].x, stroke.points[0].y);
+                for (let i = 1; i < pLen; i++) {
+                    path.lineTo(stroke.points[i].x, stroke.points[i].y);
+                }
+            }
+            stroke.cachedLinePath = path;
+            stroke.cachedLen = pLen;
         }
 
         const size = stroke.size || (stroke.isEraser ? 12 : 2);
-        const offset = -Math.floor(size / 2);
+        ctx.lineWidth = size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
 
-        const pLen = stroke.points.length;
-        if (pLen === 1) {
-            ctx.fillRect(Math.floor(stroke.points[0].x) + offset, Math.floor(stroke.points[0].y) + offset, size, size);
-            continue;
+        if (stroke.isEraser) {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = stroke.color;
         }
 
-        for (let i = 0; i < pLen - 1; i++) {
-            const p1 = stroke.points[i];
-            const p2 = stroke.points[i + 1];
-
-            let x0 = Math.floor(p1.x); let y0 = Math.floor(p1.y);
-            let x1 = Math.floor(p2.x); let y1 = Math.floor(p2.y);
-            const dx = Math.abs(x1 - x0); const sx = x0 < x1 ? 1 : -1;
-            const dy = Math.abs(y1 - y0); const sy = y0 < y1 ? 1 : -1;
-            let err = dx - dy;
-
-            while (true) {
-                ctx.fillRect(x0 + offset, y0 + offset, size, size);
-
-                if (x0 === x1 && y0 === y1) break;
-                const e2 = 2 * err;
-                if (e2 > -dy) { err -= dy; x0 += sx; }
-                if (e2 < dx) { err += dx; y0 += sy; }
-            }
+        if (stroke.points.length === 1) {
+            const offset = -Math.floor(size / 2);
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.fillRect(Math.floor(stroke.points[0].x) + offset, Math.floor(stroke.points[0].y) + offset, size, size);
+        } else if (path) {
+            ctx.stroke(path);
         }
     }
     ctx.restore();
@@ -94,7 +92,13 @@ export function setDrawingTool(tool) {
 
 export const queueDrawingSave = debounce(async () => {
     try {
-        await invoke('save_canvas_drawings', { drawings: JSON.stringify(state.drawingStrokes) });
+        const cleanStrokes = state.drawingStrokes.map(s => ({
+            isEraser: s.isEraser,
+            color: s.color,
+            size: s.size,
+            points: s.points
+        }));
+        await invoke('save_canvas_drawings', { drawings: JSON.stringify(cleanStrokes) });
     } catch (error) {
         console.error('Failed to save drawings:', error);
     }

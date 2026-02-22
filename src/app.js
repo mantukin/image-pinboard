@@ -66,6 +66,7 @@ async function initApp() {
     noteEditModal: DOM.noteEditModal,
     noteEditContent: DOM.noteEditContent,
     noteEditText: DOM.noteEditText,
+    noteFontSize: DOM.noteFontSize,
     noteColorList: DOM.noteColorList,
     noteDeleteBtn: DOM.noteDeleteBtn,
     noteCloseBtn: DOM.noteCloseBtn,
@@ -520,7 +521,12 @@ async function initApp() {
   DOM.canvasView.addEventListener('pointermove', (event) => {
     state.lastMouseX = event.clientX;
     state.lastMouseY = event.clientY;
-    updateDrawCursor(event.clientX, event.clientY);
+
+    if (event.target.closest('.canvas-hud, .canvas-drawing-tools, .import-btn')) {
+      if (DOM.drawCursor) DOM.drawCursor.classList.add('hidden');
+    } else {
+      updateDrawCursor(event.clientX, event.clientY);
+    }
   });
 
   DOM.canvasView.addEventListener('pointerleave', () => {
@@ -529,7 +535,11 @@ async function initApp() {
 
   DOM.canvasView.addEventListener('pointerenter', (event) => {
     if (state.currentDrawingTool !== 'pan') {
-      updateDrawCursor(event.clientX, event.clientY);
+      if (event.target.closest('.canvas-hud, .canvas-drawing-tools, .import-btn')) {
+        if (DOM.drawCursor) DOM.drawCursor.classList.add('hidden');
+      } else {
+        updateDrawCursor(event.clientX, event.clientY);
+      }
     }
   });
 

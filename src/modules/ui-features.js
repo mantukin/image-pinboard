@@ -39,7 +39,10 @@ export function createPipetteController({
     isPipetteMode = !isPipetteMode;
     if (isPipetteMode) {
       if (pipetteBtn) pipetteBtn.classList.add('active');
-      if (pipetteMagnifier) pipetteMagnifier.style.display = 'block';
+      if (pipetteMagnifier) {
+        pipetteMagnifier.style.opacity = '0';
+        pipetteMagnifier.style.display = 'block';
+      }
       if (fullWidthImage) fullWidthImage.style.cursor = 'none';
       if (pipetteHud) pipetteHud.style.display = 'none';
       return;
@@ -376,6 +379,7 @@ export function createNoteEditorController({
   noteEditModal,
   noteEditContent,
   noteEditText,
+  noteFontSize,
   noteColorList,
   noteDeleteBtn,
   noteCloseBtn,
@@ -393,12 +397,18 @@ export function createNoteEditorController({
   let editingNoteId = null;
   let noteToDeleteId = null;
 
-  function applyTheme(color) {
+  function applyTheme(color, fontSizeRatio = 3) {
     if (!noteEditText) {
       return;
     }
     const safeColor = normalizeNoteColor(color);
     noteEditText.style.backgroundColor = safeColor;
+
+    // Base editor size is roughly 400x400. 
+    // Using the same formula for dynamic size as on canvas: Math.min(W, H) * 0.04 * ratio
+    const editorFontSize = Math.max(16, 400 * 0.04 * fontSizeRatio);
+    noteEditText.style.fontSize = `${editorFontSize}px`;
+
     if (noteEditContent) {
       noteEditContent.style.setProperty('--note-editor-color', safeColor);
     }
@@ -427,7 +437,7 @@ export function createNoteEditorController({
         }
         note.color = color;
         onNoteVisualUpdate(note.id);
-        applyTheme(note.color);
+        applyTheme(note.color, note.fontSize);
         onQueueSave(note.id, true);
         renderColorList();
       });
@@ -467,7 +477,10 @@ export function createNoteEditorController({
 
     editingNoteId = noteId;
     noteEditText.value = note.text || '';
-    applyTheme(note.color);
+    if (noteFontSize) {
+      noteFontSize.value = note.fontSize || 3;
+    }
+    applyTheme(note.color, note.fontSize);
     noteEditModal.classList.add('visible');
     renderColorList();
     queueMicrotask(() => {
@@ -482,11 +495,17 @@ export function createNoteEditorController({
     }
 
     if (editingNoteId) {
+      const editingNote = getNoteById(editingNoteId);
+      if (editingNote) {
+        editingNote.text = noteEditText.value;
+        onNotePreviewUpdate(editingNoteId);
+      }
       onQueueSave(editingNoteId, true);
     }
     editingNoteId = null;
     noteEditModal.classList.remove('visible');
     noteEditText.style.removeProperty('background-color');
+    noteEditText.style.removeProperty('font-size');
     if (noteEditContent) {
       noteEditContent.style.removeProperty('--note-editor-color');
     }
@@ -563,8 +582,25 @@ export function createNoteEditorController({
 
       noteEditText.addEventListener('blur', () => {
         if (editingNoteId) {
+          const note = getNoteById(editingNoteId);
+          if (note) {
+            note.text = noteEditText.value;
+            onNotePreviewUpdate(note.id);
+          }
           onQueueSave(editingNoteId, true);
         }
+      });
+    }
+
+    if (noteFontSize) {
+      noteFontSize.addEventListener('input', () => {
+        if (!editingNoteId) return;
+        const note = getNoteById(editingNoteId);
+        if (!note) return;
+        note.fontSize = parseFloat(noteFontSize.value);
+        applyTheme(note.color, note.fontSize);
+        onNoteVisualUpdate(note.id);
+        onQueueSave(note.id, false);
       });
     }
   }

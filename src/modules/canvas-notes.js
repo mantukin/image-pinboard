@@ -58,7 +58,8 @@ export function updateCanvasNoteVisual(noteId) {
     const maxBySize = Math.max(0.7, Math.min((snappedW - 10) / controlsBaseWidth, (snappedH - 10) / 26));
     const uiScale = clamp(rawUiScale, 0.7, Math.min(2.4, maxBySize));
     const controlMetrics = getCanvasControlMetrics(uiScale);
-    const dynamicFontSize = clamp(Math.min(snappedW, snappedH) * 0.12, 18, 52);
+    const fontSizeRatio = note.fontSize ? parseFloat(note.fontSize) : 3;
+    const dynamicFontSize = clamp(Math.min(snappedW, snappedH) * 0.04 * fontSizeRatio, 8, 200);
 
     wrapper.style.left = `${snappedX}px`;
     wrapper.style.top = `${snappedY}px`;
@@ -108,6 +109,7 @@ export async function _flushNoteSaves() {
             width: note.width,
             height: note.height,
             z_index: note.zIndex,
+            font_size: note.fontSize || 3,
         });
     }
 
@@ -356,6 +358,7 @@ export function ensureCanvasNote(noteRecord) {
         width: clamp(noteRecord.width ?? config.NOTE_DEFAULT_WIDTH, config.NOTE_MIN_SIZE, config.NOTE_MAX_SIZE),
         height: clamp(noteRecord.height ?? config.NOTE_DEFAULT_HEIGHT, config.NOTE_MIN_SIZE, config.NOTE_MAX_SIZE),
         zIndex: noteRecord.z_index ?? noteRecord.zIndex ?? 1,
+        fontSize: noteRecord.font_size ?? noteRecord.fontSize ?? 3,
     };
 
     maps.canvasNotesById.set(note.id, note);
@@ -383,6 +386,7 @@ export function createCanvasNote() {
         width: config.NOTE_DEFAULT_WIDTH,
         height: config.NOTE_DEFAULT_HEIGHT,
         zIndex: state.maxCanvasZ,
+        fontSize: 3,
     };
 
     maps.canvasNotesById.set(note.id, note);

@@ -58,6 +58,7 @@ export const DOM = {
     get noteEditModal() { return document.getElementById('note-edit-modal'); },
     get noteEditContent() { return document.querySelector('.note-modal-content'); },
     get noteEditText() { return document.getElementById('note-edit-text'); },
+    get noteFontSize() { return document.getElementById('note-font-size'); },
     get noteColorList() { return document.getElementById('note-color-list'); },
     get noteDeleteBtn() { return document.getElementById('note-delete-btn'); },
     get noteCloseBtn() { return document.getElementById('note-close-btn'); },

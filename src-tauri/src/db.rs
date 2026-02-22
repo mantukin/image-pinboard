@@ -31,6 +31,7 @@ pub struct CanvasNoteRecord {
     pub width: f64,
     pub height: f64,
     pub z_index: i64,
+    pub font_size: f64,
     pub updated_at: i64,
 }
 
@@ -85,6 +86,7 @@ pub fn init_db(db_path: &Path) -> Result<()> {
             width REAL NOT NULL DEFAULT 240,
             height REAL NOT NULL DEFAULT 240,
             z_index INTEGER NOT NULL,
+            font_size REAL NOT NULL DEFAULT 3.0,
             updated_at INTEGER NOT NULL
         )",
         [],
@@ -95,6 +97,7 @@ pub fn init_db(db_path: &Path) -> Result<()> {
     ensure_canvas_notes_column(&conn, "color", "TEXT NOT NULL DEFAULT '#fef08a'")?;
     ensure_canvas_notes_column(&conn, "width", "REAL NOT NULL DEFAULT 240")?;
     ensure_canvas_notes_column(&conn, "height", "REAL NOT NULL DEFAULT 240")?;
+    ensure_canvas_notes_column(&conn, "font_size", "REAL NOT NULL DEFAULT 3.0")?;
     ensure_canvas_notes_column(&conn, "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
 
     conn.execute(
@@ -236,7 +239,7 @@ pub fn get_canvas_notes(db_path: &Path) -> Result<Vec<CanvasNoteRecord>> {
     let conn = Connection::open(db_path)?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, text, color, x, y, width, height, z_index, updated_at
+        "SELECT id, text, color, x, y, width, height, z_index, font_size, updated_at
          FROM canvas_notes
          ORDER BY z_index ASC",
     )?;
@@ -251,7 +254,8 @@ pub fn get_canvas_notes(db_path: &Path) -> Result<Vec<CanvasNoteRecord>> {
             width: row.get(5)?,
             height: row.get(6)?,
             z_index: row.get(7)?,
-            updated_at: row.get(8)?,
+            font_size: row.get(8)?,
+            updated_at: row.get(9)?,
         })
     })?;
 
@@ -273,13 +277,14 @@ pub fn upsert_canvas_note(
     width: f64,
     height: f64,
     z_index: i64,
+    font_size: f64,
     updated_at: i64,
 ) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
     conn.execute(
-        "INSERT INTO canvas_notes (id, text, color, x, y, width, height, z_index, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO canvas_notes (id, text, color, x, y, width, height, z_index, font_size, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(id) DO UPDATE SET
            text = excluded.text,
            color = excluded.color,
@@ -288,8 +293,9 @@ pub fn upsert_canvas_note(
            width = excluded.width,
            height = excluded.height,
            z_index = excluded.z_index,
+           font_size = excluded.font_size,
            updated_at = excluded.updated_at",
-        rusqlite::params![id, text, color, x, y, width, height, z_index, updated_at],
+        rusqlite::params![id, text, color, x, y, width, height, z_index, font_size, updated_at],
     )?;
 
     Ok(())
