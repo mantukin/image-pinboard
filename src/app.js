@@ -1,5 +1,6 @@
 import {
   clamp,
+  debounce,
   createImageIntake,
   createImageViewerController,
   createNoteEditorController,
@@ -9,12 +10,18 @@ import {
 } from './modules/ui-features.js';
 
 import { setTauriApi, DOM, state, canvasState, maps, config, controllers } from './modules/store.js';
-import { loadMoreImages, removeImageFromUI, addImageToState, attachNativeFileDrag, swapImageSrcSeamless, resolvePendingImage } from './modules/grid-ops.js';
-import { setMode, resetCanvasView, applyCanvasTransform, refreshCanvasItemVisuals, refreshCanvasImageQualityAll, resizeDrawingLayer, canvasCoordinatesFromClient, setActiveCanvasElement, ensureCanvasLayout, updateCanvasImageQuality, flushLayoutSavesDebounced } from './modules/canvas-ops.js';
+import { loadMoreImages, removeImageFromUI, addImageToState, attachNativeFileDrag, swapImageSrcSeamless, resolvePendingImage, ensureGridSeededFromCache, initializeGridIfNeeded } from './modules/grid-ops.js';
+import { setMode, resetCanvasView, applyCanvasTransform, refreshCanvasItemVisuals, refreshCanvasImageQualityAll, resizeDrawingLayer, canvasCoordinatesFromClient, beginCanvasBoxSelection, clearCanvasSelection, selectCanvasImagesOlderThanDays, getSelectedImageHashes, ensureCanvasLayout, updateCanvasImageQuality, flushLayoutSavesDebounced } from './modules/canvas-ops.js';
 import { createCanvasNote, normalizeNoteColor, updateCanvasNoteVisual, updateCanvasNotePreview, queueNoteSave, deleteCanvasNote, refreshCanvasNoteVisuals, flushNoteSavesDebounced } from './modules/canvas-notes.js';
 import { setDrawingTool, queueDrawingSave, updateDrawCursor, renderDrawings } from './modules/canvas-draw.js';
 
+function createEmptyDeleteRequest() {
+  return { hash: null, hashes: [], wrapper: null, source: 'single' };
+}
+
 async function initApp() {
+  let appSettings = {};
+
   try {
     const api = await loadTauriAPI(window);
     setTauriApi(api);
@@ -25,14 +32,23 @@ async function initApp() {
 
   setupHeaderDither(document, window);
 
+  const persistAppSettings = debounce(async () => {
+    try {
+      await (await import('./modules/store.js')).invoke('save_app_settings', { settings: JSON.stringify(appSettings) });
+    } catch (error) {
+      console.error('Failed to save settings', error);
+    }
+  }, 150);
+
   try {
     const settingsStr = await (await import('./modules/store.js')).invoke('get_app_settings');
-    const settings = JSON.parse(settingsStr || '{}');
-    if (settings.isWindowPinned) {
+    appSettings = JSON.parse(settingsStr || '{}');
+    if (appSettings.isWindowPinned) {
       state.isWindowPinned = true;
       if (DOM.pinAppBtn) DOM.pinAppBtn.classList.add('active');
       await (await import('./modules/store.js')).invoke('toggle_always_on_top', { state: true });
     }
+    state.savedCanvasScale = clamp(Number(appSettings.canvasZoom) || 1, canvasState.minScale, canvasState.maxScale);
   } catch (e) {
     console.warn('Failed to load settings', e);
   }
@@ -86,6 +102,77 @@ async function initApp() {
     invoke: (await import('./modules/store.js')).invoke,
     onImageAdded: (imageRecord) => addImageToState(imageRecord, true)
   });
+
+  function setCleanupPanelOpen(isOpen) {
+    state.isCleanupPanelOpen = isOpen;
+    if (DOM.cleanupPanel) DOM.cleanupPanel.classList.toggle('hidden', !isOpen);
+    if (DOM.cleanupToggleBtn) DOM.cleanupToggleBtn.classList.toggle('active', isOpen);
+  }
+
+  function updateCleanupDaysLabel() {
+    if (!DOM.cleanupDaysLabel) {
+      return;
+    }
+
+    const days = Math.max(1, Math.round(state.cleanupDays || 1));
+    DOM.cleanupDaysLabel.textContent = `Older than ${days} day${days === 1 ? '' : 's'}`;
+  }
+
+  function updateCleanupSelectionState(imageHashes = getSelectedImageHashes()) {
+    const imageCount = imageHashes.length;
+
+    if (DOM.cleanupSelectedCount) {
+      DOM.cleanupSelectedCount.textContent = `${imageCount} image${imageCount === 1 ? '' : 's'} selected`;
+    }
+
+    if (DOM.cleanupDeleteBtn) {
+      DOM.cleanupDeleteBtn.disabled = imageCount === 0;
+    }
+  }
+
+  function queueDeleteConfirmation(hashes, source = 'single') {
+    const uniqueHashes = [...new Set((hashes || []).filter(Boolean))];
+    if (uniqueHashes.length === 0) {
+      return;
+    }
+
+    state.imageToDelete = {
+      hash: uniqueHashes[0] || null,
+      hashes: uniqueHashes,
+      wrapper: null,
+      source,
+    };
+
+    if (DOM.confirmDialogMessage) {
+      DOM.confirmDialogMessage.textContent = uniqueHashes.length === 1
+        ? 'Delete this image?'
+        : `Delete ${uniqueHashes.length} selected images?`;
+    }
+
+    DOM.confirmDialog.classList.add('visible');
+  }
+
+  async function deleteImagesByHashes(hashes, source = 'single') {
+    const uniqueHashes = [...new Set((hashes || []).filter(Boolean))];
+    let deletedCount = 0;
+
+    for (const hash of uniqueHashes) {
+      try {
+        await (await import('./modules/store.js')).invoke('delete_image', { hash });
+        removeImageFromUI(hash);
+        deletedCount += 1;
+      } catch (error) {
+        console.error(`Error deleting image ${hash}:`, error);
+      }
+    }
+
+    if (deletedCount > 0) {
+      state.currentOffset = Math.max(0, state.currentOffset - deletedCount);
+      if (source === 'bulk') {
+        clearCanvasSelection();
+      }
+    }
+  }
 
   DOM.importBtn.addEventListener('click', async () => {
     DOM.importBtn.disabled = true;
@@ -143,11 +230,8 @@ async function initApp() {
       try {
         await (await import('./modules/store.js')).invoke('toggle_always_on_top', { state: state.isWindowPinned });
         DOM.pinAppBtn.classList.toggle('active', state.isWindowPinned);
-
-        const settingsStr = await (await import('./modules/store.js')).invoke('get_app_settings');
-        const settings = JSON.parse(settingsStr || '{}');
-        settings.isWindowPinned = state.isWindowPinned;
-        await (await import('./modules/store.js')).invoke('save_app_settings', { settings: JSON.stringify(settings) });
+        appSettings.isWindowPinned = state.isWindowPinned;
+        persistAppSettings();
       } catch (error) {
         console.error('Error toggling always on top:', error);
         state.isWindowPinned = !state.isWindowPinned;
@@ -157,20 +241,18 @@ async function initApp() {
 
   DOM.cancelDeleteBtn.addEventListener('click', () => {
     DOM.confirmDialog.classList.remove('visible');
-    state.imageToDelete = { hash: null, wrapper: null };
+    state.imageToDelete = createEmptyDeleteRequest();
   });
 
   DOM.confirmDeleteBtn.addEventListener('click', async () => {
-    if (!state.imageToDelete.hash) return;
-    try {
-      await (await import('./modules/store.js')).invoke('delete_image', { hash: state.imageToDelete.hash });
-      removeImageFromUI(state.imageToDelete.hash);
-      state.currentOffset = Math.max(0, state.currentOffset - 1);
-    } catch (error) {
-      console.error('Error deleting image:', error);
-    }
+    const hashes = state.imageToDelete.hashes?.length
+      ? state.imageToDelete.hashes
+      : (state.imageToDelete.hash ? [state.imageToDelete.hash] : []);
+    if (hashes.length === 0) return;
+
+    await deleteImagesByHashes(hashes, state.imageToDelete.source || 'single');
     DOM.confirmDialog.classList.remove('visible');
-    state.imageToDelete = { hash: null, wrapper: null };
+    state.imageToDelete = createEmptyDeleteRequest();
   });
 
   controllers.imageViewer.bindEvents();
@@ -206,6 +288,45 @@ async function initApp() {
     });
   }
 
+  if (DOM.cleanupAgeSlider) {
+    DOM.cleanupAgeSlider.value = String(state.cleanupDays);
+    DOM.cleanupAgeSlider.addEventListener('input', (event) => {
+      state.cleanupDays = parseInt(event.target.value, 10) || 30;
+      updateCleanupDaysLabel();
+    });
+  }
+
+  if (DOM.cleanupToggleBtn) {
+    DOM.cleanupToggleBtn.addEventListener('click', () => {
+      setCleanupPanelOpen(!state.isCleanupPanelOpen);
+      updateCleanupSelectionState();
+    });
+  }
+
+  if (DOM.cleanupApplyBtn) {
+    DOM.cleanupApplyBtn.addEventListener('click', () => {
+      const selectedCount = selectCanvasImagesOlderThanDays(state.cleanupDays);
+      if (DOM.cleanupSelectedCount && selectedCount === 0) {
+        DOM.cleanupSelectedCount.textContent = `0 images older than ${state.cleanupDays} day${state.cleanupDays === 1 ? '' : 's'}`;
+      }
+    });
+  }
+
+  if (DOM.cleanupDeleteBtn) {
+    DOM.cleanupDeleteBtn.addEventListener('click', () => {
+      const selectedImageHashes = getSelectedImageHashes();
+      if (selectedImageHashes.length === 0) {
+        return;
+      }
+
+      queueDeleteConfirmation(selectedImageHashes, 'bulk');
+    });
+  }
+
+  document.addEventListener('canvas-selection-change', (event) => {
+    updateCleanupSelectionState(event.detail?.imageHashes || []);
+  });
+
   if (DOM.githubRepoLink) {
     DOM.githubRepoLink.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -222,10 +343,25 @@ async function initApp() {
     hash: DOM.fullWidthImage.dataset.hash,
   }));
 
-  DOM.gridModeBtn.addEventListener('click', () => setMode('grid'));
+  DOM.gridModeBtn.addEventListener('click', () => {
+    setMode('grid');
+    setCleanupPanelOpen(false);
+    initializeGridIfNeeded();
+    ensureGridSeededFromCache();
+    loadMoreImages();
+  });
   DOM.canvasModeBtn.addEventListener('click', () => setMode('canvas'));
 
-  DOM.canvasResetBtn.addEventListener('click', () => resetCanvasView());
+  function persistCanvasZoom(scale) {
+    state.savedCanvasScale = clamp(scale, canvasState.minScale, canvasState.maxScale);
+    appSettings.canvasZoom = state.savedCanvasScale;
+    persistAppSettings();
+  }
+
+  DOM.canvasResetBtn.addEventListener('click', () => {
+    persistCanvasZoom(1);
+    resetCanvasView(1);
+  });
 
   DOM.canvasView.addEventListener('wheel', (event) => {
     event.preventDefault();
@@ -250,11 +386,19 @@ async function initApp() {
     refreshCanvasItemVisuals();
     refreshCanvasNoteVisuals();
     refreshCanvasImageQualityAll();
+    persistCanvasZoom(newScale);
   }, { passive: false });
 
   DOM.canvasView.addEventListener('pointerdown', (event) => {
     const target = event.target;
-    if (target.closest('.canvas-hud') || target.closest('.canvas-drawing-tools') || target.closest('.import-btn')) {
+    if (
+      target.closest('.canvas-hud') ||
+      target.closest('.canvas-cleanup-cluster') ||
+      target.closest('.canvas-drawing-tools') ||
+      target.closest('.import-btn') ||
+      target.closest('.action-btn') ||
+      target.closest('.canvas-resize-handle')
+    ) {
       return;
     }
 
@@ -304,12 +448,21 @@ async function initApp() {
     }
 
     const inItem = target.closest('.canvas-item');
+
+    if (event.button === 0 && event.shiftKey && state.currentDrawingTool === 'pan' && !inItem) {
+      if (beginCanvasBoxSelection(event)) {
+        return;
+      }
+    }
+
     if (event.button !== 1 && (inItem || event.button !== 0)) {
       return;
     }
 
     event.preventDefault();
-    setActiveCanvasElement(null);
+    if (event.button === 0) {
+      clearCanvasSelection();
+    }
     canvasState.isPanning = true;
     DOM.canvasView.classList.add('panning');
 
@@ -522,7 +675,7 @@ async function initApp() {
     state.lastMouseX = event.clientX;
     state.lastMouseY = event.clientY;
 
-    if (event.target.closest('.canvas-hud, .canvas-drawing-tools, .import-btn')) {
+    if (event.target.closest('.canvas-hud, .canvas-cleanup-cluster, .canvas-drawing-tools, .import-btn')) {
       if (DOM.drawCursor) DOM.drawCursor.classList.add('hidden');
     } else {
       updateDrawCursor(event.clientX, event.clientY);
@@ -535,7 +688,7 @@ async function initApp() {
 
   DOM.canvasView.addEventListener('pointerenter', (event) => {
     if (state.currentDrawingTool !== 'pan') {
-      if (event.target.closest('.canvas-hud, .canvas-drawing-tools, .import-btn')) {
+      if (event.target.closest('.canvas-hud, .canvas-cleanup-cluster, .canvas-drawing-tools, .import-btn')) {
         if (DOM.drawCursor) DOM.drawCursor.classList.add('hidden');
       } else {
         updateDrawCursor(event.clientX, event.clientY);
@@ -545,9 +698,14 @@ async function initApp() {
 
   window.addEventListener('resize', resizeDrawingLayer);
 
-  await loadMoreImages();
-  resetCanvasView();
+  updateCleanupDaysLabel();
+  updateCleanupSelectionState();
+  setCleanupPanelOpen(false);
+
+  await initializeGridIfNeeded();
+  resetCanvasView(state.savedCanvasScale);
   setMode('grid');
+  ensureGridSeededFromCache();
 }
 
 if (document.readyState === 'loading') {

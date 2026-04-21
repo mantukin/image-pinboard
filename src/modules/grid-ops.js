@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc, DOM, state, maps, config, controllers } from './store.js';
-import { ensureCanvasItem } from './canvas-ops.js';
+import { ensureCanvasItem, getCanvasSelectionKey, removeCanvasSelectionKey } from './canvas-ops.js';
 
 export function getImageSrc(imageRecord) {
     if (imageRecord.thumbnail_path === 'PENDING') {
@@ -102,6 +102,10 @@ export function trackPendingImage(imageRecord) {
         return;
     }
 
+    if (maps.pendingHashes.has(imageRecord.hash)) {
+        return;
+    }
+
     if (maps.pendingHashes.size === 0) {
         state.batchTotal = 0;
     }
@@ -183,7 +187,15 @@ export function buildActionsContainer(imageRecord, wrapper) {
     deleteBtn.appendChild(deleteIcon);
     deleteBtn.addEventListener('click', (event) => {
         event.stopPropagation();
-        state.imageToDelete = { hash: imageRecord.hash, wrapper: wrapper };
+        state.imageToDelete = {
+            hash: imageRecord.hash,
+            hashes: [imageRecord.hash],
+            wrapper: wrapper,
+            source: 'single'
+        };
+        if (DOM.confirmDialogMessage) {
+            DOM.confirmDialogMessage.textContent = 'Delete this image?';
+        }
         DOM.confirmDialog.classList.add('visible');
     });
 
@@ -255,8 +267,19 @@ export function createGridImageElement(imageRecord) {
     return wrapper;
 }
 
-export function addImageToState(imageRecord, prepend) {
-    maps.imagesByHash.set(imageRecord.hash, imageRecord);
+function upsertImageRecord(imageRecord) {
+    const existing = maps.imagesByHash.get(imageRecord.hash);
+    const mergedRecord = existing ? { ...existing, ...imageRecord } : imageRecord;
+    maps.imagesByHash.set(mergedRecord.hash, mergedRecord);
+    return mergedRecord;
+}
+
+function ensureGridImageElement(imageRecord, prepend) {
+    const existingWrapper = maps.gridElementsByHash.get(imageRecord.hash);
+    if (existingWrapper) {
+        return existingWrapper;
+    }
+
     DOM.placeholder.style.display = 'none';
 
     const gridWrapper = createGridImageElement(imageRecord);
@@ -265,18 +288,87 @@ export function addImageToState(imageRecord, prepend) {
     if (prepend) {
         const firstCard = [...DOM.gridView.querySelectorAll('.img-wrapper')][0] || DOM.loadingIndicator;
         DOM.gridView.insertBefore(gridWrapper, firstCard);
-        state.currentOffset += 1;
     } else {
         DOM.gridView.insertBefore(gridWrapper, DOM.loadingIndicator);
     }
 
-    if (state.canvasLayoutLoaded || state.currentMode === 'canvas') {
-        ensureCanvasItem(imageRecord);
+    return gridWrapper;
+}
+
+function getCachedImagesSorted() {
+    return [...maps.imagesByHash.values()].sort((left, right) => (right.timestamp || 0) - (left.timestamp || 0));
+}
+
+export async function initializeGridIfNeeded() {
+    if (state.isGridHydrated || state.isLoading) {
+        return;
     }
-    trackPendingImage(imageRecord);
+
+    state.isLoading = true;
+    DOM.loadingIndicator.classList.add('visible');
+
+    try {
+        const images = await invoke('get_all_images');
+
+        if (images.length > 0) {
+            DOM.placeholder.style.display = 'none';
+        }
+
+        for (const imageRecord of images) {
+            const mergedRecord = upsertImageRecord(imageRecord);
+            ensureGridImageElement(mergedRecord, false);
+            trackPendingImage(mergedRecord);
+        }
+
+        state.currentOffset = images.length;
+        state.allImagesLoaded = true;
+        state.isGridHydrated = true;
+    } catch (error) {
+        console.error('Error hydrating grid:', error);
+    } finally {
+        state.isLoading = false;
+        DOM.loadingIndicator.classList.remove('visible');
+    }
+}
+
+export function ensureGridSeededFromCache() {
+    if (maps.gridElementsByHash.size > 0 || maps.imagesByHash.size === 0) {
+        return false;
+    }
+
+    const cachedImages = getCachedImagesSorted();
+    const seedCount = Math.min(config.PAGE_SIZE, cachedImages.length);
+
+    for (let index = 0; index < seedCount; index += 1) {
+        const imageRecord = cachedImages[index];
+        ensureGridImageElement(imageRecord, false);
+        trackPendingImage(imageRecord);
+    }
+
+    state.currentOffset = Math.max(state.currentOffset, seedCount);
+    state.allImagesLoaded = seedCount >= cachedImages.length;
+    return seedCount > 0;
+}
+
+export function addImageToState(imageRecord, prepend) {
+    const mergedRecord = upsertImageRecord(imageRecord);
+    const hadGridElement = maps.gridElementsByHash.has(mergedRecord.hash);
+
+    ensureGridImageElement(mergedRecord, prepend);
+
+    if (prepend && !hadGridElement) {
+        state.currentOffset += 1;
+    }
+
+    if (state.canvasLayoutLoaded || state.currentMode === 'canvas') {
+        ensureCanvasItem(mergedRecord);
+    }
+    trackPendingImage(mergedRecord);
 }
 
 export function removeImageFromUI(hash) {
+    resolvePendingImage(hash);
+
     const gridWrapper = maps.gridElementsByHash.get(hash);
     if (gridWrapper) {
         gridWrapper.remove();
@@ -285,12 +377,7 @@ export function removeImageFromUI(hash) {
 
     const canvasWrapper = maps.canvasElementsByHash.get(hash);
     if (canvasWrapper) {
-        if (state.activeCanvasElement === canvasWrapper) {
-            // setActiveCanvasElement(null) logic, we will export that from canvas-opts
-            // for now just remove active class manually
-            state.activeCanvasElement.classList.remove('active');
-            state.activeCanvasElement = null;
-        }
+        removeCanvasSelectionKey(getCanvasSelectionKey('image', hash));
         canvasWrapper.remove();
         maps.canvasElementsByHash.delete(hash);
     }
@@ -309,6 +396,13 @@ export function removeImageFromUI(hash) {
 }
 
 export async function loadMoreImages() {
+    if (!state.isGridHydrated) {
+        await initializeGridIfNeeded();
+        return;
+    }
+
+    ensureGridSeededFromCache();
+
     if (state.isLoading || state.allImagesLoaded) {
         return;
     }
@@ -327,7 +421,7 @@ export async function loadMoreImages() {
         }
 
         for (const imageRecord of images) {
-            if (maps.imagesByHash.has(imageRecord.hash)) {
+            if (maps.gridElementsByHash.has(imageRecord.hash)) {
                 continue;
             }
             addImageToState(imageRecord, false);

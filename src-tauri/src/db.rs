@@ -152,6 +152,32 @@ pub fn get_images_paged(db_path: &Path, limit: i32, offset: i32) -> Result<Vec<I
     Ok(result)
 }
 
+pub fn get_all_images(db_path: &Path) -> Result<Vec<ImageRecord>> {
+    let conn = Connection::open(db_path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT hash, timestamp, file_path, thumbnail_path
+         FROM images
+         ORDER BY timestamp DESC",
+    )?;
+
+    let records = stmt.query_map([], |row| {
+        Ok(ImageRecord {
+            hash: row.get(0)?,
+            timestamp: row.get(1)?,
+            file_path: row.get(2)?,
+            thumbnail_path: row.get(3)?,
+        })
+    })?;
+
+    let mut result = Vec::new();
+    for record in records {
+        result.push(record?);
+    }
+
+    Ok(result)
+}
+
 pub fn image_exists(db_path: &Path, hash: &str) -> Result<bool> {
     let conn = Connection::open(db_path)?;
 

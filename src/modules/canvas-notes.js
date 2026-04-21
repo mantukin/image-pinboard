@@ -1,6 +1,6 @@
 import { clamp, debounce } from './ui-features.js';
 import { invoke, maps, state, config, controllers, DOM, canvasState } from './store.js';
-import { getCanvasCenterWorld, getCanvasControlMetrics, canvasCoordinatesFromClient, setActiveCanvasElement } from './canvas-ops.js';
+import { getCanvasCenterWorld, getCanvasControlMetrics, canvasCoordinatesFromClient, setActiveCanvasElement, setActiveCanvasNote, beginCanvasSelectionDrag, getCanvasSelectionKey, removeCanvasSelectionKey, toggleCanvasSelectionKey } from './canvas-ops.js';
 
 
 export function createNoteId() {
@@ -159,6 +159,7 @@ export async function deleteCanvasNote(noteId) {
     }
 
     const wrapper = maps.canvasNoteElementsById.get(noteId);
+    removeCanvasSelectionKey(getCanvasSelectionKey('note', noteId));
     if (wrapper) {
         wrapper.remove();
         maps.canvasNoteElementsById.delete(noteId);
@@ -188,7 +189,7 @@ export function beginCanvasNoteResize(noteId, direction, event) {
         return;
     }
 
-    setActiveCanvasElement(wrapper);
+    setActiveCanvasNote(noteId);
     bringCanvasNoteToFront(noteId);
 
     const startPointer = canvasCoordinatesFromClient(event.clientX, event.clientY);
@@ -313,31 +314,17 @@ export function createCanvasNoteElement(note) {
             return;
         }
 
+        if (event.shiftKey && state.currentDrawingTool === 'pan') {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleCanvasSelectionKey(getCanvasSelectionKey('note', note.id));
+            return;
+        }
+
         event.preventDefault();
         event.stopPropagation();
 
-        setActiveCanvasElement(wrapper);
-        bringCanvasNoteToFront(note.id);
-
-        const startPointer = canvasCoordinatesFromClient(event.clientX, event.clientY);
-        const startX = note.x;
-        const startY = note.y;
-
-        function onMove(moveEvent) {
-            const pointer = canvasCoordinatesFromClient(moveEvent.clientX, moveEvent.clientY);
-            note.x = startX + (pointer.x - startPointer.x);
-            note.y = startY + (pointer.y - startPointer.y);
-            updateCanvasNoteVisual(note.id);
-        }
-
-        function onUp() {
-            window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
-            queueNoteSave(note.id);
-        }
-
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
+        beginCanvasSelectionDrag(getCanvasSelectionKey('note', note.id), event);
     });
 
     maps.canvasNoteElementsById.set(note.id, wrapper);

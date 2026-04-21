@@ -69,7 +69,26 @@
       <div id="canvas-grid-fine" class="canvas-grid-layer canvas-grid-fine"></div>
       <div id="canvas-surface" class="canvas-surface"></div>
       <canvas id="canvas-drawing-layer" class="canvas-drawing-layer"></canvas>
+      <div id="canvas-selection-box" class="canvas-selection-box hidden"></div>
       <div id="draw-cursor" class="draw-cursor hidden"></div>
+      <div class="canvas-cleanup-cluster">
+        <button id="cleanup-toggle-btn" class="import-btn canvas-cleanup-btn" title="Select old images for cleanup">CLEANUP</button>
+        <div id="cleanup-panel" class="canvas-cleanup-panel hidden">
+          <div class="canvas-cleanup-topline">
+            <span id="cleanup-days-label" class="canvas-cleanup-days-label">Older than 30 days</span>
+            <span id="cleanup-selected-count" class="canvas-cleanup-selected-count">0 images selected</span>
+          </div>
+          <div class="canvas-cleanup-actions">
+            <input type="range" id="cleanup-age-slider" min="1" max="365" step="1" value="30"
+              class="retro-slider canvas-cleanup-slider">
+            <button id="cleanup-apply-btn" class="import-btn canvas-tool-btn canvas-cleanup-apply-btn"
+              title="Select images older than the chosen age">OK</button>
+            <button id="cleanup-delete-btn" class="canvas-cleanup-delete-btn" title="Delete selected images" disabled>
+              <img src="assets/icons/delete_icon.webp" alt="Delete selected images" draggable="false">
+            </button>
+          </div>
+        </div>
+      </div>
       <button id="add-note-btn" class="import-btn canvas-add-note-btn" title="Add sticky note">+ NOTE</button>
 
       <div class="canvas-drawing-tools">
@@ -97,7 +116,7 @@
 
   <div id="confirm-dialog" class="modal-overlay">
     <div class="modal-content">
-      <p>Delete this image?</p>
+      <p id="confirm-dialog-message">Delete this image?</p>
       <div class="modal-actions">
         <button id="confirm-delete-btn" class="btn btn-danger">Delete</button>
         <button id="cancel-delete-btn" class="btn">Cancel</button>

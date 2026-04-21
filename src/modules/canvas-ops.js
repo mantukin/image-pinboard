@@ -1,7 +1,7 @@
 import { clamp, debounce } from './ui-features.js';
 import { invoke, convertFileSrc, DOM, state, canvasState, maps, config, controllers } from './store.js';
 import { buildActionsContainer, getImageSrc, swapImageSrcSeamless } from './grid-ops.js';
-import { ensureCanvasNote, refreshCanvasNoteVisuals } from './canvas-notes.js';
+import { ensureCanvasNote, refreshCanvasNoteVisuals, updateCanvasNoteVisual, queueNoteSave } from './canvas-notes.js';
 import { renderDrawings } from './canvas-draw.js';
 
 export function canvasCoordinatesFromClient(clientX, clientY) {
@@ -195,6 +195,195 @@ export function refreshCanvasImageQualityAll() {
     }
 }
 
+export function getCanvasSelectionKey(type, id) {
+    return `${type}:${id}`;
+}
+
+function normalizeImageTimestampMs(timestamp) {
+    if (!timestamp) {
+        return 0;
+    }
+
+    return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
+}
+
+function parseCanvasSelectionKey(key) {
+    const separatorIndex = key.indexOf(':');
+    if (separatorIndex === -1) {
+        return { type: 'image', id: key };
+    }
+
+    return {
+        type: key.slice(0, separatorIndex),
+        id: key.slice(separatorIndex + 1),
+    };
+}
+
+function getCanvasWrapperByKey(key) {
+    const { type, id } = parseCanvasSelectionKey(key);
+    if (type === 'note') {
+        return maps.canvasNoteElementsById.get(id) || null;
+    }
+    return maps.canvasElementsByHash.get(id) || null;
+}
+
+function getCanvasModelByKey(key) {
+    const { type, id } = parseCanvasSelectionKey(key);
+    if (type === 'note') {
+        return maps.canvasNotesById.get(id) || null;
+    }
+    return maps.canvasLayoutByHash.get(id) || null;
+}
+
+function getCanvasRectByKey(key) {
+    const model = getCanvasModelByKey(key);
+    if (!model) {
+        return null;
+    }
+
+    return {
+        x: model.x,
+        y: model.y,
+        width: model.width,
+        height: model.height,
+    };
+}
+
+function getCanvasZIndexByKey(key) {
+    const model = getCanvasModelByKey(key);
+    return model?.zIndex ?? 0;
+}
+
+function setCanvasZIndexByKey(key, zIndex) {
+    const model = getCanvasModelByKey(key);
+    const wrapper = getCanvasWrapperByKey(key);
+    if (!model) {
+        return;
+    }
+
+    model.zIndex = zIndex;
+    if (wrapper) {
+        wrapper.style.zIndex = String(zIndex);
+    }
+}
+
+function updateCanvasEntityVisualByKey(key) {
+    const { type, id } = parseCanvasSelectionKey(key);
+    if (type === 'note') {
+        updateCanvasNoteVisual(id);
+        return;
+    }
+    updateCanvasItemVisual(id);
+}
+
+function queueCanvasEntitySaveByKey(key) {
+    const { type, id } = parseCanvasSelectionKey(key);
+    if (type === 'note') {
+        queueNoteSave(id);
+        return;
+    }
+    queueLayoutSave(id);
+}
+
+function updateCanvasSelectionBox(bounds) {
+    if (!DOM.canvasSelectionBox) {
+        return;
+    }
+
+    DOM.canvasSelectionBox.classList.remove('hidden');
+    DOM.canvasSelectionBox.style.left = `${bounds.left}px`;
+    DOM.canvasSelectionBox.style.top = `${bounds.top}px`;
+    DOM.canvasSelectionBox.style.width = `${bounds.width}px`;
+    DOM.canvasSelectionBox.style.height = `${bounds.height}px`;
+}
+
+function hideCanvasSelectionBox() {
+    if (!DOM.canvasSelectionBox) {
+        return;
+    }
+
+    DOM.canvasSelectionBox.classList.add('hidden');
+    DOM.canvasSelectionBox.style.width = '0px';
+    DOM.canvasSelectionBox.style.height = '0px';
+}
+
+function getCanvasSelectionBounds(startClientX, startClientY, currentClientX, currentClientY) {
+    const rect = DOM.canvasView.getBoundingClientRect();
+    const startX = startClientX - rect.left;
+    const startY = startClientY - rect.top;
+    const currentX = currentClientX - rect.left;
+    const currentY = currentClientY - rect.top;
+
+    return {
+        left: Math.min(startX, currentX),
+        top: Math.min(startY, currentY),
+        width: Math.abs(currentX - startX),
+        height: Math.abs(currentY - startY),
+    };
+}
+
+function getCanvasSelectionWorldRect(startClientX, startClientY, currentClientX, currentClientY) {
+    const start = canvasCoordinatesFromClient(startClientX, startClientY);
+    const current = canvasCoordinatesFromClient(currentClientX, currentClientY);
+
+    return {
+        x: Math.min(start.x, current.x),
+        y: Math.min(start.y, current.y),
+        width: Math.abs(current.x - start.x),
+        height: Math.abs(current.y - start.y),
+    };
+}
+
+function rectsIntersect(leftRect, rightRect) {
+    return (
+        leftRect.x <= rightRect.x + rightRect.width &&
+        leftRect.x + leftRect.width >= rightRect.x &&
+        leftRect.y <= rightRect.y + rightRect.height &&
+        leftRect.y + leftRect.height >= rightRect.y
+    );
+}
+
+function getCanvasSelectionKeysInRect(worldRect) {
+    const keys = [];
+
+    for (const hash of maps.canvasElementsByHash.keys()) {
+        const itemRect = getCanvasRectByKey(getCanvasSelectionKey('image', hash));
+        if (itemRect && rectsIntersect(worldRect, itemRect)) {
+            keys.push(getCanvasSelectionKey('image', hash));
+        }
+    }
+
+    for (const noteId of maps.canvasNoteElementsById.keys()) {
+        const noteRect = getCanvasRectByKey(getCanvasSelectionKey('note', noteId));
+        if (noteRect && rectsIntersect(worldRect, noteRect)) {
+            keys.push(getCanvasSelectionKey('note', noteId));
+        }
+    }
+
+    return keys;
+}
+
+function getSelectedImageHashesFromKeys(keys) {
+    return keys
+        .map((key) => parseCanvasSelectionKey(key))
+        .filter((entry) => entry.type === 'image')
+        .map((entry) => entry.id);
+}
+
+function emitCanvasSelectionChange() {
+    if (typeof document === 'undefined') {
+        return;
+    }
+
+    const selectedKeys = [...state.selectedCanvasKeys];
+    document.dispatchEvent(new CustomEvent('canvas-selection-change', {
+        detail: {
+            keys: selectedKeys,
+            imageHashes: getSelectedImageHashesFromKeys(selectedKeys),
+        }
+    }));
+}
+
 export function setActiveCanvasElement(wrapper) {
     if (state.activeCanvasElement === wrapper) {
         return;
@@ -211,9 +400,233 @@ export function setActiveCanvasElement(wrapper) {
     }
 }
 
+export function clearCanvasSelection() {
+    if (state.selectedCanvasKeys.size > 0) {
+        for (const key of state.selectedCanvasKeys) {
+            const wrapper = getCanvasWrapperByKey(key);
+            if (wrapper) {
+                wrapper.classList.remove('selected');
+            }
+        }
+        state.selectedCanvasKeys.clear();
+    }
+
+    state.activeCanvasHash = null;
+    setActiveCanvasElement(null);
+    emitCanvasSelectionChange();
+}
+
+export function setCanvasSelection(keys, activeKey = null) {
+    const nextKeys = [...new Set(keys.filter(Boolean))];
+    const nextSelection = new Set(nextKeys);
+
+    for (const key of state.selectedCanvasKeys) {
+        if (nextSelection.has(key)) {
+            continue;
+        }
+
+        const wrapper = getCanvasWrapperByKey(key);
+        if (wrapper) {
+            wrapper.classList.remove('selected');
+        }
+    }
+
+    for (const key of nextSelection) {
+        const wrapper = getCanvasWrapperByKey(key);
+        if (wrapper) {
+            wrapper.classList.add('selected');
+        }
+    }
+
+    state.selectedCanvasKeys = nextSelection;
+
+    const focusKey = nextKeys.length > 0
+        ? (activeKey && nextSelection.has(activeKey) ? activeKey : nextKeys[nextKeys.length - 1])
+        : null;
+
+    if (!focusKey) {
+        state.activeCanvasHash = null;
+        setActiveCanvasElement(null);
+        emitCanvasSelectionChange();
+        return;
+    }
+
+    const focusWrapper = getCanvasWrapperByKey(focusKey);
+    const parsedFocus = parseCanvasSelectionKey(focusKey);
+    state.activeCanvasHash = parsedFocus.type === 'image' ? parsedFocus.id : null;
+    setActiveCanvasElement(focusWrapper);
+    emitCanvasSelectionChange();
+}
+
+export function removeCanvasSelectionKey(key) {
+    if (!state.selectedCanvasKeys.has(key)) {
+        return;
+    }
+
+    const nextKeys = [...state.selectedCanvasKeys].filter((selectedKey) => selectedKey !== key);
+    setCanvasSelection(nextKeys, nextKeys[nextKeys.length - 1] || null);
+}
+
+export function toggleCanvasSelectionKey(key) {
+    const nextKeys = [...state.selectedCanvasKeys];
+    const existingIndex = nextKeys.indexOf(key);
+
+    if (existingIndex >= 0) {
+        nextKeys.splice(existingIndex, 1);
+        setCanvasSelection(nextKeys, nextKeys[nextKeys.length - 1] || null);
+        return false;
+    }
+
+    nextKeys.push(key);
+    setCanvasSelection(nextKeys, key);
+    return true;
+}
+
+export function getSelectedImageHashes() {
+    return getSelectedImageHashesFromKeys([...state.selectedCanvasKeys]);
+}
+
+export function selectCanvasImagesOlderThanDays(days) {
+    const safeDays = Math.max(1, Math.round(days || 0));
+    const cutoffMs = Date.now() - safeDays * 24 * 60 * 60 * 1000;
+    const matchingKeys = [];
+
+    for (const imageRecord of maps.imagesByHash.values()) {
+        const timestampMs = normalizeImageTimestampMs(imageRecord.timestamp || 0);
+        if (timestampMs > 0 && timestampMs <= cutoffMs) {
+            matchingKeys.push(getCanvasSelectionKey('image', imageRecord.hash));
+        }
+    }
+
+    setCanvasSelection(matchingKeys, matchingKeys[matchingKeys.length - 1] || null);
+    return matchingKeys.length;
+}
+
 export function setActiveCanvasItem(hash) {
-    state.activeCanvasHash = hash;
-    setActiveCanvasElement(maps.canvasElementsByHash.get(hash) || null);
+    const selectionKey = getCanvasSelectionKey('image', hash);
+    setCanvasSelection([selectionKey], selectionKey);
+}
+
+export function setActiveCanvasNote(noteId) {
+    const selectionKey = getCanvasSelectionKey('note', noteId);
+    setCanvasSelection([selectionKey], selectionKey);
+}
+
+export function beginCanvasSelectionDrag(anchorKey, event) {
+    if (event.button !== 0) {
+        return;
+    }
+
+    const selectionKeys = state.selectedCanvasKeys.has(anchorKey)
+        ? [...state.selectedCanvasKeys]
+        : [anchorKey];
+
+    setCanvasSelection(selectionKeys, anchorKey);
+
+    const orderedKeys = [...selectionKeys].sort((leftKey, rightKey) => (
+        getCanvasZIndexByKey(leftKey) - getCanvasZIndexByKey(rightKey)
+    ));
+
+    for (const key of orderedKeys) {
+        state.maxCanvasZ += 1;
+        setCanvasZIndexByKey(key, state.maxCanvasZ);
+    }
+
+    const startPointer = canvasCoordinatesFromClient(event.clientX, event.clientY);
+    const startPositions = orderedKeys
+        .map((key) => {
+            const model = getCanvasModelByKey(key);
+            if (!model) {
+                return null;
+            }
+
+            return {
+                key,
+                x: model.x,
+                y: model.y,
+            };
+        })
+        .filter(Boolean);
+
+    function onMove(moveEvent) {
+        const pointer = canvasCoordinatesFromClient(moveEvent.clientX, moveEvent.clientY);
+        const deltaX = pointer.x - startPointer.x;
+        const deltaY = pointer.y - startPointer.y;
+
+        for (const entry of startPositions) {
+            const model = getCanvasModelByKey(entry.key);
+            if (!model) {
+                continue;
+            }
+
+            model.x = entry.x + deltaX;
+            model.y = entry.y + deltaY;
+            updateCanvasEntityVisualByKey(entry.key);
+        }
+    }
+
+    function onUp() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+
+        for (const entry of startPositions) {
+            queueCanvasEntitySaveByKey(entry.key);
+        }
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+}
+
+export function beginCanvasBoxSelection(event) {
+    if (event.button !== 0 || state.currentDrawingTool !== 'pan') {
+        return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    let moved = false;
+
+    DOM.canvasView.classList.add('selecting');
+    updateCanvasSelectionBox({
+        left: startClientX - DOM.canvasView.getBoundingClientRect().left,
+        top: startClientY - DOM.canvasView.getBoundingClientRect().top,
+        width: 0,
+        height: 0,
+    });
+
+    function onMove(moveEvent) {
+        const bounds = getCanvasSelectionBounds(startClientX, startClientY, moveEvent.clientX, moveEvent.clientY);
+        moved = moved || bounds.width > 3 || bounds.height > 3;
+        updateCanvasSelectionBox(bounds);
+
+        const worldRect = getCanvasSelectionWorldRect(startClientX, startClientY, moveEvent.clientX, moveEvent.clientY);
+        const selectionKeys = getCanvasSelectionKeysInRect(worldRect);
+        setCanvasSelection(selectionKeys, selectionKeys[selectionKeys.length - 1] || null);
+    }
+
+    function onUp(moveEvent) {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        DOM.canvasView.classList.remove('selecting');
+        hideCanvasSelectionBox();
+
+        if (!moved) {
+            clearCanvasSelection();
+            return;
+        }
+
+        const worldRect = getCanvasSelectionWorldRect(startClientX, startClientY, moveEvent.clientX, moveEvent.clientY);
+        const selectionKeys = getCanvasSelectionKeysInRect(worldRect);
+        setCanvasSelection(selectionKeys, selectionKeys[selectionKeys.length - 1] || null);
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return true;
 }
 
 export function beginCanvasResize(imageRecord, direction, event) {
@@ -358,32 +771,17 @@ export function createCanvasImageElement(imageRecord) {
             return;
         }
 
+        if (event.shiftKey && state.currentDrawingTool === 'pan') {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleCanvasSelectionKey(getCanvasSelectionKey('image', imageRecord.hash));
+            return;
+        }
+
         event.preventDefault();
         event.stopPropagation();
 
-        setActiveCanvasItem(imageRecord.hash);
-        bringCanvasItemToFront(imageRecord.hash);
-
-        const startPointer = canvasCoordinatesFromClient(event.clientX, event.clientY);
-        const layout = maps.canvasLayoutByHash.get(imageRecord.hash);
-        const startX = layout.x;
-        const startY = layout.y;
-
-        function onMove(moveEvent) {
-            const pointer = canvasCoordinatesFromClient(moveEvent.clientX, moveEvent.clientY);
-            layout.x = startX + (pointer.x - startPointer.x);
-            layout.y = startY + (pointer.y - startPointer.y);
-            updateCanvasItemVisual(imageRecord.hash);
-        }
-
-        function onUp() {
-            window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
-            queueLayoutSave(imageRecord.hash);
-        }
-
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
+        beginCanvasSelectionDrag(getCanvasSelectionKey('image', imageRecord.hash), event);
     });
 
     maps.canvasElementsByHash.set(imageRecord.hash, wrapper);
@@ -497,18 +895,25 @@ export async function initializeCanvasIfNeeded() {
             console.error('Failed to load canvas drawings:', err);
         }
 
-        for (const imageRecord of maps.imagesByHash.values()) {
-            ensureCanvasItem(imageRecord);
+        const imageRecords = await invoke('get_all_images');
+        for (const imageRecord of imageRecords) {
+            const existingRecord = maps.imagesByHash.get(imageRecord.hash);
+            const mergedRecord = existingRecord ? { ...existingRecord, ...imageRecord } : imageRecord;
+            maps.imagesByHash.set(mergedRecord.hash, mergedRecord);
+            ensureCanvasItem(mergedRecord);
         }
     } catch (error) {
         console.error('Failed to load canvas layout:', error);
     }
 }
 
-export function resetCanvasView() {
-    canvasState.x = Math.round(DOM.canvasView.clientWidth * 0.15);
-    canvasState.y = Math.round(DOM.canvasView.clientHeight * 0.15);
-    canvasState.scale = 1;
+export function resetCanvasView(scale = 1) {
+    const viewWidth = DOM.canvasView.clientWidth || DOM.workspace?.clientWidth || window.innerWidth || 1200;
+    const viewHeight = DOM.canvasView.clientHeight || DOM.workspace?.clientHeight || window.innerHeight || 800;
+
+    canvasState.x = Math.round(viewWidth * 0.15);
+    canvasState.y = Math.round(viewHeight * 0.15);
+    canvasState.scale = clamp(scale, canvasState.minScale, canvasState.maxScale);
     applyCanvasTransform();
     refreshCanvasItemVisuals();
     refreshCanvasNoteVisuals();

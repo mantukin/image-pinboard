@@ -200,6 +200,12 @@ async fn get_images(
 }
 
 #[tauri::command]
+async fn get_all_images(app: tauri::AppHandle) -> Result<Vec<db::ImageRecord>, String> {
+    let db_path = get_db_path(&app)?;
+    db::get_all_images(&db_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_canvas_layout(app: tauri::AppHandle) -> Result<Vec<db::CanvasLayoutRecord>, String> {
     let db_path = get_db_path(&app)?;
     db::get_canvas_layout(&db_path).map_err(|e| e.to_string())
@@ -711,6 +717,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_images,
+            get_all_images,
             get_canvas_layout,
             save_canvas_layout,
             get_canvas_notes,
